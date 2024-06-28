@@ -10,13 +10,6 @@ This Godot tool provides a simple way to load scenes asynchronously, improving y
 - Track loading progress with a percentage value.
 - Receive notifications upon successful or failed scene loading.
 
-### Installation
-
-1. Copy the `AsyncScene.gd` script into your project. 
-2. Optionally, you can create a new resource type for easier access:
-    - Go to **Project > Project Settings > Plugins > Resource** and click "Create a Resource Type".
-    - Choose a name (e.g., "AsyncScene") and link it to the `AsyncScene.gd` script.
-
 ### Usage
 
 **1. Loading a scene:**
