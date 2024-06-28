@@ -67,7 +67,7 @@ var status = scene.GetStatus() # Returns a string like "THREAD_LOAD_IN_PROGRESS"
 
 ### Example
 
-Check the provided `example.tscn` scene for a practical demonstration of how to use the AsyncScene tool.
+Check the provided example folder for a practical demonstration of how to use the AsyncScene tool.
 
 
 This readme provides a basic overview of the AsyncScene tool and its usage. You can further customize and extend this tool to suit your specific needs. 
