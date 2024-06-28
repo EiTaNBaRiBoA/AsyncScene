@@ -5,14 +5,14 @@ var scene : AsyncScene = null
 
 
 func _ready() -> void:
-	#scene = AsyncScene.new(scenePath,AsyncScene.LoadingSceneOperation.Replace) loading and later changing using scene.ChangeScene()
-	#scene = AsyncScene.new(scenePath,AsyncScene.LoadingSceneOperation.ReplaceImmediate) Immediately changing the scene after loading
-	scene = AsyncScene.new(scenePath,AsyncScene.LoadingSceneOperation.Additive) #Loading Scene additively to another scene 
+	scene = AsyncScene.new(scenePath,AsyncScene.LoadingSceneOperation.Replace) #loading and later changing using scene.ChangeScene()
+	#scene = AsyncScene.new(scenePath,AsyncScene.LoadingSceneOperation.ReplaceImmediate) #Immediately changing the scene after loading
+	#scene = AsyncScene.new(scenePath,AsyncScene.LoadingSceneOperation.Additive) #Loading Scene additively to another scene 
 	scene.OnComplete.connect(complete) #Binding to signal after complete loading
 	
 func complete() -> void:
-	#scene.UnloadScene() Unloading scene 
-	#scene.ChangeScene() Changing the main scene manually
+	scene.ChangeScene() #Changing the main scene manually
+	#scene.UnloadScene() #Unloading scene 
 	print("Loading complete")
 	pass
 	

@@ -38,8 +38,7 @@ func ChangeScene() -> void:
 	if not isCompleted: 
 		printerr("Scene hasn't been loaded yet")
 		return
-	Engine.get_main_loop().root.get_tree().change_scene_to_packed(myRes)
-	currentSceneNode = Engine.get_main_loop().root.get_tree().current_scene
+	_changeImmediate()
 
 func GetStatus() -> String:
 	return status_names.get(_getStatus())
@@ -50,13 +49,19 @@ func _additiveScene() -> void:
 	currentSceneNode = myRes.instantiate()
 	Engine.get_main_loop().root.call_deferred("add_child",currentSceneNode)
 
+func _changeImmediate() -> void:
+	currentSceneNode = Engine.get_main_loop().root.get_tree().current_scene
+	currentSceneNode.queue_free()
+	_additiveScene()
+	
 
 ## Unloading
 func UnloadScene() -> void:
 	if not isCompleted: 
 		printerr("Scene hasn't been loaded yet")
 		return
-	currentSceneNode.queue_free()
+	if currentSceneNode:
+		currentSceneNode.queue_free()
 	queue_free()
 
 
@@ -78,14 +83,14 @@ func _check_status() -> void:
 	if _getStatus() == ResourceLoader.THREAD_LOAD_LOADED:
 		myRes = ResourceLoader.load_threaded_get(packedScenePath)
 		if typeOperation == LoadingSceneOperation.ReplaceImmediate:
-			ChangeScene()
+			_changeImmediate()
 		elif typeOperation == LoadingSceneOperation.Additive:
 			_additiveScene()
-		_complete()
+		_complete(false)
 	elif _getStatus() == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
-		_complete()
+		_complete(true)
 	elif _getStatus() == ResourceLoader.THREAD_LOAD_FAILED:
-		_complete()
+		_complete(true)
 	elif _getStatus() == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
 		var progressArr : Array = []
 		ResourceLoader.load_threaded_get_status(packedScenePath,progressArr)
@@ -93,9 +98,9 @@ func _check_status() -> void:
 
 
 
-func _complete() -> void:
+func _complete(isFailed : bool) -> void:
+	isCompleted = !isFailed
+	progress = 100
 	timer.queue_free()
 	OnComplete.emit()
-	isCompleted = true
-	progress = 100
 #endregion
