@@ -1,15 +1,37 @@
 [gd_scene load_steps=2 format=3 uid="uid://ca76hnnn8ums7"]
 
-[ext_resource type="Script" path="res://addons/AsyncSceneManager/Examples/SceneChanging.gd" id="1_bldvc"]
+[ext_resource type="Script" uid="uid://c6yslfyqcr1jy" path="res://AsyncScene/addons/AsyncSceneManager/Examples/SceneChanging.gd" id="1_bldvc"]
 
-[node name="scene_main" type="Node2D"]
+[node name="scene_main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 script = ExtResource("1_bldvc")
+scene_path = null
 
 [node name="Label" type="Label" parent="."]
-offset_left = 452.0
-offset_right = 1152.0
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -350.0
+offset_right = 350.0
 offset_bottom = 261.0
+grow_horizontal = 2
 theme_override_font_sizes/font_size = 191
 text = "Scene 1"
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="ProgressBar" type="ProgressBar" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -96.0
+grow_horizontal = 2
+grow_vertical = 0

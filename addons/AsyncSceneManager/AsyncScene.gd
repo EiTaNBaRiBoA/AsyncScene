@@ -1,196 +1,268 @@
-extends Node
-class_name AsyncScene
+class_name AsyncScene extends Node
 
-# Defines the different operations that can be performed with the scene loader
-enum LoadingSceneOperation {
-	ReplaceImmediate, # Replaces the current scene immediately upon loading
-	Replace, # Doesn't replace the scene immediately; call ChangeScene() to replace
-	AdditiveImmediate, # Adds the new scene as a child to the root node immediately upon loading
-	Additive # Doesn't add the scene immediately; call ChangeScene() to add
+#region Enums and Signals
+
+## Defines the different operations that can be performed with the scene loader.
+enum LoadingOperation {
+	Replace, ## Doesn't replace the scene immediately; call change_scene() to replace.
+	ReplaceImmediate, ## Replaces the current scene immediately upon loading.
+	Additive, ## Doesn't add the scene immediately; call change_scene() to add as a child of root.
+	AdditiveImmediate ## Adds the new scene as a child to the root node immediately upon loading.
 }
 
-# Maps ResourceLoader.ThreadLoadStatus values to human-readable strings
-var status_names = {
-	ResourceLoader.THREAD_LOAD_IN_PROGRESS: "THREAD_LOAD_IN_PROGRESS",
-	ResourceLoader.THREAD_LOAD_FAILED: "THREAD_LOAD_FAILED",
-	ResourceLoader.THREAD_LOAD_INVALID_RESOURCE: "THREAD_LOAD_INVALID_RESOURCE",
-	ResourceLoader.THREAD_LOAD_LOADED: "THREAD_LOAD_LOADED"
+## Defines error codes for loading failures.
+enum ErrorCode {
+	OK, ## No error.
+	InvalidPath, ## The provided scene path does not exist.
+	LoadFailed, ## The resource loader failed to start or complete the request.
+	InvalidResource ## The loaded resource is invalid or not a PackedScene.
 }
 
-# Timer for checking the loading status
-var timer: Timer = Timer.new()
+## Defines transition types for scene changes.
+enum TransitionType {
+	None, ## No transition effect.
+	Fade ## A simple fade-to-color-and-back transition.
+}
 
-# Signal emitted when the scene loading is complete
-signal OnComplete
 
-# Path to the packed scene file
-var packedScenePath: String = ""
+## Emitted when the scene has been successfully loaded.
+## [param loader_instance] A reference to this AsyncScene instance.
+signal OnComplete(loader_instance: AsyncScene)
 
-# Loaded PackedScene resource
-var myRes: PackedScene = null
+## Emitted when an error occurs during loading.
+## [param err_code] The ErrorCode representing the failure.
+## [param err_message] A descriptive string of the error.
+signal OnError(err_code: ErrorCode, err_message: String)
 
-# Instance of the loaded scene
-var currentSceneNode: Node = null
+## Emitted periodically during loading to report progress.
+## [param progress] The loading progress as a value from 0.0 to 1.0.
+signal OnProgressUpdate(progress: float)
 
-# Loading progress (0-100)
-var progress: float = 0
+#endregion
 
-# Flag indicating if the scene has been loaded successfully
-var isCompleted: bool = false
+#region Public Properties
 
-# Selected operation type for loading the scene
-var typeOperation: LoadingSceneOperation = LoadingSceneOperation.ReplaceImmediate
+## The current loading progress from 0.0 to 1.0.
+var progress: float = 0.0:
+	get: return _progress
 
-# Flag to prevent multiple scene changes (for Replace and Additive operations)
-var changed: bool = false
+## Returns true if the scene has been successfully loaded.
+var is_completed: bool = false:
+	get: return _is_completed
 
-# Constructor for the AsyncScene class
-#
-# Args:
-#     tscnPath (String): Path to the packed scene file
-#     setOperation (LoadingSceneOperation): Type of operation to perform with the scene (default: ReplaceImmediate)
-func _init(tscnPath: String, setOperation: LoadingSceneOperation = LoadingSceneOperation.ReplaceImmediate) -> void:
-	packedScenePath = tscnPath
-	typeOperation = setOperation
+## The error code if loading failed.
+var error_code: ErrorCode = ErrorCode.OK:
+	get: return _error_code
 
-	# Check if the scene file exists
-	if not ResourceLoader.exists(tscnPath):
-		printerr("Invalid scene path: " + tscnPath)
+#endregion
+
+#region Private Properties
+
+# Configuration
+var _packed_scene_path: String
+var _operation: LoadingOperation
+var _scene_parameters: Array = []
+var _transition_type: TransitionType = TransitionType.None
+var _transition_duration: float = 0.5
+var _transition_color: Color = Color.BLACK
+var _current_scene: Node = null
+
+# State
+var _loaded_resource: PackedScene
+var _is_completed: bool = false
+var _progress: float = 0.0
+var _error_code: ErrorCode = ErrorCode.OK
+var _has_changed_scene: bool = false
+
+#endregion
+
+#region Constructor & Lifecycle
+
+## Initializes the scene loader. Must be added to the scene tree to start loading.
+## [param tscn_path] Path to the packed scene file.
+## [param set_operation] The loading operation to perform (default: Replace).
+func _init(tscn_path: String, set_operation: LoadingOperation = LoadingOperation.Replace, current_scene: Node = null) -> void:
+	_packed_scene_path = tscn_path
+	_operation = set_operation
+	_current_scene = current_scene
+
+
+func start() -> void:
+	# Start loading only when added to the scene tree.
+	# This ensures timers and tweens can be created correctly.
+	Engine.get_main_loop().root.add_child.call_deferred(self)
+	_start_loading()
+
+#endregion
+
+#region Public Methods
+
+## Manually triggers the scene change for non-immediate operations.
+## This method should only be called after the 'OnComplete' signal has been emitted.
+func change_scene() -> void:
+	if not _is_completed:
+		push_error("Cannot change scene: Loading is not complete.")
 		return
 
-	# Request the scene to be loaded in a separate thread
-	ResourceLoader.load_threaded_request(tscnPath, "", true)
-
-	# Call _setupUpdateSeconds() after the current frame is finished
-	call_deferred("_setupUpdateSeconds")
-
-# Changes the current scene to the loaded scene
-#
-# This method should only be called after the scene is fully loaded.
-func ChangeScene() -> void:
-	# Check if the scene has been loaded
-	if not isCompleted:
-		printerr("Scene hasn't been loaded yet.")
+	if _has_changed_scene:
 		return
 
-	# Prevent multiple scene changes for Replace and Additive operations
-	if changed:
-		return
+	_has_changed_scene = true
 
-	# Perform the appropriate scene change based on the selected operation type
-	if typeOperation == LoadingSceneOperation.Replace:
-		_changeImmediate()
-	elif typeOperation == LoadingSceneOperation.Additive:
-		_additiveScene()
+	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.Additive:
+		_perform_scene_change()
 
-	# Mark the scene as changed
-	changed = true
 
-# Returns the current status of the scene loading as a human-readable string
-func GetStatus() -> String:
-	return status_names.get(_getStatus())
+## Sets custom parameters to be passed to the new scene.
+## The new scene's root node should have a function `on_scene_loaded(params: Dictionary)`
+## to receive these parameters. Returns self to allow for method chaining.
+func with_parameters(...params: Array) -> AsyncScene:
+	_scene_parameters = params
+	return self
+
+
+## Configures a transition effect for the scene change.
+## Returns self to allow for method chaining.
+func with_transition(type: TransitionType, duration: float = 0.5, color: Color = Color.BLACK) -> AsyncScene:
+	_transition_type = type
+	_transition_duration = duration
+	_transition_color = color
+	return self
+
+
+## Cleans up the loader instance. Typically called after the scene change is complete.
+func cleanup() -> void:
+	queue_free()
+
+#endregion
 
 #region Private Methods
 
-# Adds the loaded scene as a child of the root node
-func _additiveScene() -> void:
-	# Instantiate the loaded scene
-	currentSceneNode = myRes.instantiate()
-
-	# Add the scene to the root node
-	Engine.get_main_loop().root.call_deferred("add_child", currentSceneNode)
-
-# Replaces the current scene with the loaded scene
-func _changeImmediate() -> void:
-	# Get the current scene
-	currentSceneNode = Engine.get_main_loop().root.get_tree().current_scene
-
-	# Queue the current scene for deletion if it exists
-	if currentSceneNode:
-		currentSceneNode.queue_free()
-
-	# Add the loaded scene to the tree
-	_additiveScene()
-
-# Unloads the loaded scene and cleans up the AsyncScene instance
-func UnloadScene() -> void:
-	# Check if the scene has been loaded
-	if not isCompleted:
-		printerr("Scene hasn't been loaded yet.")
+func _start_loading() -> void:
+	if not ResourceLoader.exists(_packed_scene_path):
+		_fail(ErrorCode.InvalidPath, "Scene path does not exist: %s" % _packed_scene_path)
 		return
 
-	# Delete the scene instance if it exists
-	if currentSceneNode:
-		currentSceneNode.queue_free()
+	var error: Error = ResourceLoader.load_threaded_request(_packed_scene_path, "", true)
+	if error != OK:
+		_fail(ErrorCode.LoadFailed, "Failed to start threaded request for: %s (Error %s)" % [_packed_scene_path, error])
+		return
 
-	# Delete the AsyncScene instance
+	# Start a timer to check the status periodically.
+	var timer: Timer = Timer.new()
+	timer.wait_time = 0.05
+	timer.timeout.connect(_check_status.bind(timer))
+	self.add_child.call_deferred(timer)
+	timer.autostart = 1
+
+
+func _check_status(timer: Timer) -> void:
+	var progress_array: Array[float] = []
+	var status: ResourceLoader.ThreadLoadStatus = ResourceLoader.load_threaded_get_status(_packed_scene_path, progress_array)
+
+	match status:
+		ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			if not progress_array.is_empty():
+				var new_progress: float = progress_array[0]
+				if not is_equal_approx(new_progress, _progress):
+					_progress = new_progress
+					OnProgressUpdate.emit(_progress*100)
+
+		ResourceLoader.THREAD_LOAD_FAILED:
+			_fail(ErrorCode.LoadFailed, "ResourceLoader failed to load the scene resource.")
+			timer.queue_free()
+
+		ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			_fail(ErrorCode.InvalidResource, "The loaded resource is invalid.")
+			timer.queue_free()
+
+		ResourceLoader.THREAD_LOAD_LOADED:
+			_loaded_resource = ResourceLoader.load_threaded_get(_packed_scene_path)
+			if not _loaded_resource is PackedScene:
+				_fail(ErrorCode.InvalidResource, "Loaded resource is not a PackedScene.")
+				timer.queue_free()
+				return
+
+			_complete()
+			timer.queue_free()
+
+
+func _complete() -> void:
+	if _is_completed: return
+
+	_is_completed = true
+	_progress = 1.0
+	OnProgressUpdate.emit(_progress*100)
+	OnComplete.emit(self)
+
+	if _operation == LoadingOperation.ReplaceImmediate or _operation == LoadingOperation.AdditiveImmediate:
+		_perform_scene_change()
+
+
+func _fail(err_code: ErrorCode, err_message: String) -> void:
+	if _is_completed: return # Already completed or failed
+
+	_is_completed = true # Mark as "completed" to stop processing
+	_error_code = err_code
+	printerr(err_message)
+	OnError.emit(_error_code, err_message)
+
+	# Self-destruct after error
 	queue_free()
 
-# Sets up the timer to check the loading status
-func _setupUpdateSeconds() -> void:
-	# Add the timer as a child of the root node
-	Engine.get_main_loop().root.add_child(timer)
 
-	# Set timer properties
-	timer.one_shot = false
-	timer.autostart = true
-	timer.set_wait_time(0.1)
+func _perform_scene_change() -> void:
+	if _transition_type == TransitionType.Fade:
+		_fade_out_and_change()
+	else:
+		_change_scene_logic()
+		# For non-transition changes, the loader can be cleaned up.
+		# The calling script is responsible for this if it needs the loader instance.
 
-	# Connect the timer timeout signal to _check_status
-	timer.timeout.connect(_check_status)
 
-	# Start the timer
-	timer.start()
+func _fade_out_and_change() -> void:
+	var canvas: CanvasLayer = CanvasLayer.new()
+	canvas.layer = 128 # High layer to render on top of everything
+	var rect: ColorRect = ColorRect.new()
+	rect.color = _transition_color
+	rect.color.a = 0.0 # Start transparent
+	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	canvas.add_child(rect)
+	get_tree().root.add_child(canvas)
 
-# Returns the current status of the scene loading
-func _getStatus() -> ResourceLoader.ThreadLoadStatus:
-	return ResourceLoader.load_threaded_get_status(packedScenePath)
+	var tween: Tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(rect, "color:a", 1.0, _transition_duration / 2.0)
+	await tween.finished
 
-# Checks the loading status of the scene
-func _check_status() -> void:
-	# Check if the scene is already loaded
-	if isCompleted:
-		return
+	_change_scene_logic()
 
-	# Get the loading status
-	var status = _getStatus()
+	# Await one frame to ensure the new scene is rendered before fading in
+	await get_tree().process_frame
 
-	# Handle the different loading statuses
-	if status == ResourceLoader.THREAD_LOAD_LOADED:
-		# Get the loaded PackedScene resource
-		myRes = ResourceLoader.load_threaded_get(packedScenePath)
+	tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(rect, "color:a", 0.0, _transition_duration / 2.0)
+	await tween.finished
 
-		# Handle the different operation types
-		if typeOperation == LoadingSceneOperation.ReplaceImmediate:
-			_changeImmediate()
-		elif typeOperation == LoadingSceneOperation.AdditiveImmediate:
-			_additiveScene()
+	canvas.queue_free()
+	# The loader's job is done after the transition.
+	cleanup()
 
-		# Mark the scene as loaded and stop the timer
-		_complete(false)
-	elif status == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
-		# Mark the scene loading as failed and stop the timer
-		_complete(true)
-	elif status == ResourceLoader.THREAD_LOAD_FAILED:
-		# Mark the scene loading as failed and stop the timer
-		_complete(true)
-	elif status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-		# Get the loading progress
-		var progressArr: Array = []
-		ResourceLoader.load_threaded_get_status(packedScenePath, progressArr)
-		progress = progressArr.front() * 100
 
-# Called when the scene loading is complete
-func _complete(isFailed: bool) -> void:
-	# Set the loading status
-	isCompleted = !isFailed
+func _change_scene_logic() -> void:
+	# For replacement, it's safer and cleaner to use the built-in tree method.
+	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.ReplaceImmediate:
+		if _current_scene:
+			_current_scene.queue_free()
+		var new_scene_instance : Node = _loaded_resource.instantiate()
+		get_tree().root.call_deferred("add_child", new_scene_instance)
+		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
+			new_scene_instance.on_scene_loaded(_scene_parameters)
 
-	# Set the loading progress to 100%
-	progress = 100
+	# For additive, instantiate and add it to the root.
+	elif _operation == LoadingOperation.Additive or _operation == LoadingOperation.AdditiveImmediate:
+		var new_scene_instance: Node = _loaded_resource.instantiate()
+		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
+			new_scene_instance.on_scene_loaded(_scene_parameters)
+		get_tree().root.call_deferred("add_child", new_scene_instance)
 
-	# Delete the timer
-	timer.queue_free()
-
-	# Emit the OnComplete signal
-	OnComplete.emit()
 #endregion
