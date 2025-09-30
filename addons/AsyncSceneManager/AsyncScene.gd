@@ -116,18 +116,16 @@ func change_scene() -> void:
 ## Sets custom parameters to be passed to the new scene.
 ## The new scene's root node should have a function `on_scene_loaded(params: Dictionary)`
 ## to receive these parameters. Returns self to allow for method chaining.
-func with_parameters(...params: Array) -> AsyncScene:
+func with_parameters(...params: Array) -> void:
 	_scene_parameters = params
-	return self
 
 
 ## Configures a transition effect for the scene change.
 ## Returns self to allow for method chaining.
-func with_transition(type: TransitionType, duration: float = 0.5, color: Color = Color.BLACK) -> AsyncScene:
+func with_transition(type: TransitionType, duration: float = 0.5, color: Color = Color.BLACK) -> void:
 	_transition_type = type
 	_transition_duration = duration
 	_transition_color = color
-	return self
 
 
 ## Cleans up the loader instance. Typically called after the scene change is complete.
@@ -166,7 +164,7 @@ func _check_status(timer: Timer) -> void:
 				var new_progress: float = progress_array[0]
 				if not is_equal_approx(new_progress, _progress):
 					_progress = new_progress
-					OnProgressUpdate.emit(_progress*100)
+					OnProgressUpdate.emit(_progress * 100)
 
 		ResourceLoader.THREAD_LOAD_FAILED:
 			_fail(ErrorCode.LoadFailed, "ResourceLoader failed to load the scene resource.")
@@ -192,7 +190,7 @@ func _complete() -> void:
 
 	_is_completed = true
 	_progress = 1.0
-	OnProgressUpdate.emit(_progress*100)
+	OnProgressUpdate.emit(_progress * 100)
 	OnComplete.emit(self)
 
 	if _operation == LoadingOperation.ReplaceImmediate or _operation == LoadingOperation.AdditiveImmediate:
@@ -253,7 +251,7 @@ func _change_scene_logic() -> void:
 	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.ReplaceImmediate:
 		if _current_scene:
 			_current_scene.queue_free()
-		var new_scene_instance : Node = _loaded_resource.instantiate()
+		var new_scene_instance: Node = _loaded_resource.instantiate()
 		get_tree().root.call_deferred("add_child", new_scene_instance)
 		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
 			new_scene_instance.on_scene_loaded(_scene_parameters)

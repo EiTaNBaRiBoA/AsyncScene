@@ -10,7 +10,7 @@ It allows you to load scenes in the background, monitor their progress, pass dat
   * **Immediate or Manual Control**: Choose to switch scenes immediately upon loading or trigger the change manually.
   * **Progress Tracking**: Use the `OnProgressUpdate` signal to easily connect the loader to a progress bar or UI element.
   * **Robust Error Handling**: The `OnError` signal provides specific error codes and messages for easy debugging.
-  * **Parameter Passing**: Send a `Dictionary` of data to the new scene's root script.
+  * **Parameter Passing**: Send a parameters of data to the new scene's root script.
   * **Built-in Transitions**: Includes a simple, configurable fade-to-black transition.
 
 
@@ -25,7 +25,7 @@ In the script that will initiate the scene change, create a new `AsyncScene` ins
 ```gdscript
 # In the script that initiates the scene load, e.g., LevelManager.gd
 
-func _load_next_level():
+func _load_next_level() -> void:
     # 1. Create the loader and configure it
     var loader: AsyncScene = AsyncScene.new(
         "res://path/to/your/scene.tscn",
@@ -44,12 +44,12 @@ func _load_next_level():
     # 3. Add the loader to the scene tree to start the process
     loader.start()
 
-func on_load_complete(loader: AsyncScene):
+func on_load_complete(loader: AsyncScene) -> void:
     print("Load complete! Changing scene now.")
     # For non-immediate operations (Replace, Additive), we must call change_scene()
     loader.change_scene()
 
-func on_load_error(err_code: AsyncScene.ErrorCode, err_msg: String):
+func on_load_error(err_code: AsyncScene.ErrorCode, err_msg: String) -> void:
     print("Failed to load scene. Error %s: %s" % [err_code, err_msg])
     # Handle the error, e.g., show an error message to the user
 ```
@@ -83,7 +83,7 @@ func on_scene_loaded(...params: Array) -> void:
 
 ### Methods
 
-  * `with_parameters(params: Dictionary) -> AsyncScene`: Sets data to pass to the new scene.
-  * `with_transition(type: TransitionType, duration: float, color: Color) -> AsyncScene`: Configures a visual transition.
+  * `with_parameters(...params: Array) -> void`: Sets data to pass to the new scene.
+  * `with_transition(type: TransitionType, duration: float, color: Color) -> void`: Configures a visual transition.
   * `change_scene() -> void`: Manually triggers the scene change for `Replace` and `Additive` operations.
   * `cleanup() -> void`: Removes the loader instance from the tree. This is called automatically after a transition.

@@ -1,24 +1,24 @@
 extends Control
 
 # Create an AsyncScene instance to handle the loading process
-var scene : AsyncScene = null
+var scene: AsyncScene = null
 
 # Export the path to the scene you want to load
-@export var scene_path : String = 'res://AsyncScene/addons/AsyncSceneManager/Examples/scene_to_load.tscn'
+@export var scene_path: String = 'res://AsyncScene/addons/AsyncSceneManager/Examples/scene_to_load.tscn'
 
 func _ready() -> void:
 	# 1. Create the loader and configure it
 	var loader: AsyncScene = AsyncScene.new(
 		scene_path,
 		AsyncScene.LoadingOperation.ReplaceImmediate
-		,self
+		, self
 	)
 
 	loader.with_parameters({"player_score": 1000, "entry_point": "west_gate"})
 	loader.with_transition(AsyncScene.TransitionType.Fade, 1.0, Color.BLACK)
 
 	# 2. Connect to its signals
-	loader.OnProgressUpdate.connect(func(p: float) -> void: $ProgressBar.value = p*100)
+	loader.OnProgressUpdate.connect(func(p: float) -> void: $ProgressBar.value = p * 100)
 	loader.OnComplete.connect(on_load_complete)
 	loader.OnError.connect(on_load_error)
 
@@ -43,4 +43,4 @@ func complete() -> void:
 	print("Loading complete")
 	
 	# Unload the scene (optional):
-	scene.UnloadScene() 
+	scene.UnloadScene()
