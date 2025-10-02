@@ -44,8 +44,16 @@ signal OnComplete(loader_instance: AsyncScene)
 signal OnError(err_code: ErrorCode, err_message: String)
 
 ## Emitted periodically during loading to report progress.
-## [param progress] The loading progress as a value from 0.0 to 1.0.
+## [param progress] The loading progress as a value from 0.0 to 100.0.
 signal OnProgressUpdate(progress: float)
+
+## Emitted when a pausable transition reaches its midpoint (screen covered).
+## The scene has been changed at this point.
+## Connect to this signal to perform actions before the transition continues.
+signal OnTransitionMidpoint(loader_instance: AsyncScene)
+
+# Internal signal for resuming manual pauses
+signal resumed
 
 #endregion
 
@@ -71,10 +79,15 @@ var error_code: ErrorCode = ErrorCode.OK:
 var _packed_scene_path: String
 var _operation: LoadingOperation
 var _scene_parameters: Array = []
+var _current_scene: Node = null
+
+# Transition Configuration
 var _transition_type: TransitionType = TransitionType.None
 var _transition_duration: float = 0.5
 var _transition_color: Color = Color.BLACK
-var _current_scene: Node = null
+var _transition_texture: Texture2D = null
+var _transition_pausable: bool = false
+var _transition_pause_duration: float = 0.0
 
 # State
 var _loaded_resource: PackedScene
@@ -82,6 +95,7 @@ var _is_completed: bool = false
 var _progress: float = 0.0
 var _error_code: ErrorCode = ErrorCode.OK
 var _has_changed_scene: bool = false
+var _is_paused_at_midpoint: bool = false
 
 #endregion
 
@@ -107,43 +121,62 @@ func start() -> void:
 #region Public Methods
 
 ## Manually triggers the scene change for non-immediate operations.
-## This method should only be called after the 'OnComplete' signal has been emitted.
+## This method should only be called after the 'OnComplete' signal has been emitted
 func change_scene() -> void:
 	if not _is_completed:
 		push_error("Cannot change scene: Loading is not complete.")
 		return
-
-	if _has_changed_scene:
-		return
-
+	if _has_changed_scene: return
 	_has_changed_scene = true
-
 	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.Additive:
 		_perform_scene_change()
 
-
-## Sets custom parameters to be passed to the new scene.
-## The new scene's root node should have a function `on_scene_loaded(params: Dictionary)`
-## to receive these parameters. Returns self to allow for method chaining.
-func with_parameters(...params: Array) -> void:
+## Sets custom parameters to be passed to the new scene. Returns self for method chaining.
+func with_parameters(...params: Array) -> AsyncScene:
 	_scene_parameters = params
+	return self
 
-
-## Configures a transition effect for the scene change.
-## Returns self to allow for method chaining.
-func with_transition(type: TransitionType, duration: float = 0.5, color: Color = Color.BLACK) -> void:
+## Configures a transition effect for the scene change. Returns self for method chaining.
+## [param type] The type of transition to use.
+## [param duration] The total duration of the transition.
+## [param visual] The visual to use: a Color for solid colors, or a Texture2D for images.
+## Note: Iris transition only supports Color.
+func with_transition(type: TransitionType, duration: float = 0.5, visual: Variant = Color.BLACK) -> AsyncScene:
 	_transition_type = type
 	_transition_duration = duration
-	_transition_color = color
+	if visual is Color:
+		_transition_color = visual
+		_transition_texture = null
+	elif visual is Texture2D:
+		_transition_texture = visual
+		_transition_color = Color.WHITE # For modulation
+	else:
+		push_warning("Invalid visual type for transition. Must be Color or Texture2D. Defaulting to BLACK.")
+		_transition_color = Color.BLACK
+		_transition_texture = null
+	return self
 
+## Makes the transition pause at its midpoint. Returns self for method chaining.
+## [param duration] Pause time in seconds. If < 0, pause is indefinite and requires a manual call to resume_transition().
+## Note: This feature is supported by Fade, Wipe, and Iris transitions.
+func with_pause(duration: float = -1.0) -> AsyncScene:
+	_transition_pausable = true
+	_transition_pause_duration = duration
+	return self
 
-## Cleans up the loader instance. Typically called after the scene change is complete.
+## Resumes a transition that was manually paused at its midpoint.
+func resume_transition() -> void:
+	if _is_paused_at_midpoint:
+		_is_paused_at_midpoint = false
+		emit_signal("resumed")
+
+## Cleans up the loader instance.
 func cleanup() -> void:
 	queue_free()
 
 #endregion
 
-#region Private Methods
+#region Private Methods (Loading)
 
 func _start_loading() -> void:
 	if not ResourceLoader.exists(_packed_scene_path):
@@ -218,22 +251,6 @@ func _fail(err_code: ErrorCode, err_message: String) -> void:
 	queue_free()
 
 
-func _perform_scene_change() -> void:
-	match _transition_type:
-		TransitionType.Fade:
-			_fade_out_and_change()
-		TransitionType.WipeLeft, TransitionType.WipeRight, TransitionType.WipeUp, TransitionType.WipeDown:
-			_wipe_and_change()
-		TransitionType.SlideLeft, TransitionType.SlideRight, TransitionType.SlideUp, TransitionType.SlideDown:
-			_slide_and_change()
-		TransitionType.Iris:
-			_iris_and_change()
-		_: # This handles TransitionType.None
-			_change_scene_logic()
-			# The loader's job is done for non-transition changes.
-			cleanup()
-
-
 func _change_scene_logic() -> void:
 	# For replacement, it's safer and cleaner to use the built-in tree method.
 	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.ReplaceImmediate:
@@ -253,49 +270,78 @@ func _change_scene_logic() -> void:
 
 #endregion
 
-#region Transitions
+#region Private Methods (Transitions)
+
+func _perform_scene_change() -> void:
+	match _transition_type:
+		TransitionType.Fade: _fade_out_and_change()
+		TransitionType.WipeLeft, TransitionType.WipeRight, TransitionType.WipeUp, TransitionType.WipeDown: _wipe_and_change()
+		TransitionType.SlideLeft, TransitionType.SlideRight, TransitionType.SlideUp, TransitionType.SlideDown: _slide_and_change()
+		TransitionType.Iris: _iris_and_change()
+		_: # This handles TransitionType.None
+			_change_scene_logic()
+			# The loader's job is done for non-transition changes.
+			cleanup()
+
+## Helper to create the transition visual (ColorRect or TextureRect).
+func _create_transition_visual() -> Control:
+	var visual_node: Control
+	if _transition_texture:
+		var tex_rect := TextureRect.new()
+		tex_rect.texture = _transition_texture
+		tex_rect.stretch_mode = TextureRect.STRETCH_SCALE
+		tex_rect.modulate = _transition_color # Modulate texture with color
+		visual_node = tex_rect
+	else:
+		var color_rect := ColorRect.new()
+		color_rect.color = _transition_color
+		visual_node = color_rect
+	visual_node.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	return visual_node
+
+## Handles the pause logic at the midpoint of a transition.
+func _handle_midpoint_pause() -> void:
+	if _transition_pausable:
+		_is_paused_at_midpoint = true
+		OnTransitionMidpoint.emit(self)
+		if _transition_pause_duration >= 0:
+			await get_tree().create_timer(_transition_pause_duration).timeout
+			_is_paused_at_midpoint = false
+		else:
+			await self.resumed
 
 func _fade_out_and_change() -> void:
-	var canvas: CanvasLayer = CanvasLayer.new()
-	canvas.layer = 128 # High layer to render on top of everything
-	var rect: ColorRect = ColorRect.new()
-	rect.color = _transition_color
-	rect.color.a = 0.0 # Start transparent
-	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	canvas.add_child(rect)
+	var canvas := CanvasLayer.new()
+	canvas.layer = 128
+	var visual_node: Control = _create_transition_visual()
+	visual_node.modulate.a = 0.0
+	canvas.add_child(visual_node)
 	get_tree().root.add_child(canvas)
 
-	var tween: Tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	tween.tween_property(rect, "color:a", 1.0, _transition_duration / 2.0)
-	await tween.finished
+	var tween_in := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween_in.tween_property(visual_node, "modulate:a", 1.0, _transition_duration / 2.0)
+	await tween_in.finished
 
 	_change_scene_logic()
-
-	# Await one frame to ensure the new scene is rendered before fading in
 	await get_tree().process_frame
+	await _handle_midpoint_pause()
 
-	tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	tween.tween_property(rect, "color:a", 0.0, _transition_duration / 2.0)
-	await tween.finished
+	var tween_out := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween_out.tween_property(visual_node, "modulate:a", 0.0, _transition_duration / 2.0)
+	await tween_out.finished
 
 	canvas.queue_free()
 	cleanup()
 
-
 func _wipe_and_change() -> void:
-	var canvas: CanvasLayer = CanvasLayer.new()
+	var canvas := CanvasLayer.new()
 	canvas.layer = 128
-	var rect: ColorRect = ColorRect.new()
-	rect.color = _transition_color
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	rect.size = viewport_size
-	canvas.add_child(rect)
+	var visual_node: Control = _create_transition_visual()
+	canvas.add_child(visual_node)
 	get_tree().root.add_child(canvas)
-
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 	var start_pos: Vector2
-	var mid_pos: Vector2 = Vector2.ZERO
 	var end_pos: Vector2
-
 	match _transition_type:
 		TransitionType.WipeLeft:
 			start_pos = Vector2(viewport_size.x, 0)
@@ -309,48 +355,42 @@ func _wipe_and_change() -> void:
 		TransitionType.WipeDown:
 			start_pos = Vector2(0, -viewport_size.y)
 			end_pos = Vector2(0, viewport_size.y)
+	visual_node.position = start_pos
 
-	rect.position = start_pos
+	var tween_in := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween_in.tween_property(visual_node, "position", Vector2.ZERO, _transition_duration / 2.0)
+	await tween_in.finished
+	
+	_change_scene_logic()
+	await get_tree().process_frame
+	await _handle_midpoint_pause()
 
-	var tween: Tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	tween.tween_property(rect, "position", mid_pos, _transition_duration / 2.0)
-	tween.tween_callback(_change_scene_logic)
-	tween.tween_interval(0.05) # Give a moment for the scene change to register
-	tween.tween_property(rect, "position", end_pos, _transition_duration / 2.0)
+	var tween_out := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	tween_out.tween_property(visual_node, "position", end_pos, _transition_duration / 2.0)
+	await tween_out.finished
 
-	await tween.finished
 	canvas.queue_free()
 	cleanup()
 
-
 func _slide_and_change() -> void:
 	var old_scene_tex: Texture2D = get_viewport().get_texture()
-
 	var canvas: CanvasLayer = CanvasLayer.new()
 	canvas.layer = 128
-	
 	var old_scene_rect: TextureRect = TextureRect.new()
 	old_scene_rect.texture = old_scene_tex
 	old_scene_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	canvas.add_child(old_scene_rect)
-	
 	var new_scene_rect: TextureRect = TextureRect.new()
 	new_scene_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	canvas.add_child(new_scene_rect)
-	
 	get_tree().root.add_child(canvas)
-
 	_change_scene_logic()
 	await get_tree().process_frame
-	
 	var new_scene_tex: Texture2D = get_viewport().get_texture()
 	new_scene_rect.texture = new_scene_tex
-
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 	var old_scene_end_pos: Vector2
 	var new_scene_start_pos: Vector2
-	var new_scene_end_pos: Vector2 = Vector2.ZERO
-
 	match _transition_type:
 		TransitionType.SlideLeft:
 			old_scene_end_pos = Vector2(-viewport_size.x, 0)
@@ -364,59 +404,49 @@ func _slide_and_change() -> void:
 		TransitionType.SlideDown:
 			old_scene_end_pos = Vector2(0, viewport_size.y)
 			new_scene_start_pos = Vector2(0, -viewport_size.y)
-	
 	new_scene_rect.position = new_scene_start_pos
-
 	var tween: Tween = create_tween().set_parallel().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	tween.tween_property(old_scene_rect, "position", old_scene_end_pos, _transition_duration)
-	tween.tween_property(new_scene_rect, "position", new_scene_end_pos, _transition_duration)
-	
+	tween.tween_property(new_scene_rect, "position", Vector2.ZERO, _transition_duration)
 	await tween.finished
-	
 	canvas.queue_free()
 	cleanup()
-
 
 func _iris_and_change() -> void:
 	var iris_shader_code: String = """
 shader_type canvas_item;
-
 uniform vec4 color : source_color = vec4(0.0, 0.0, 0.0, 1.0);
-uniform float progress : hint_range(0.0, 1.0); // 0.0 = transparent, 1.0 = opaque
+uniform float progress : hint_range(0.0, 1.0);
 uniform float smoothness : hint_range(0.0, 0.5) = 0.05;
-
 void fragment() {
-	float dist_from_center = distance(UV, vec2(0.5));
-	float radius = (1.0 - progress) * 0.75; // 0.75 is slightly > diagonal dist
-	float value = smoothstep(radius, radius + smoothness, dist_from_center);
-	COLOR = vec4(color.rgb, value);
+	float dist = distance(UV, vec2(0.5));
+	float radius = (1.0 - progress) * 0.75;
+	COLOR = vec4(color.rgb, smoothstep(radius, radius + smoothness, dist));
 }
 """
-	var canvas: CanvasLayer = CanvasLayer.new()
+	var canvas := CanvasLayer.new()
 	canvas.layer = 128
-	var rect: ColorRect = ColorRect.new()
+	var rect := ColorRect.new()
 	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	
-	var shader: Shader = Shader.new()
+	var shader := Shader.new()
 	shader.code = iris_shader_code
-	var material: ShaderMaterial = ShaderMaterial.new()
+	var material := ShaderMaterial.new()
 	material.shader = shader
-	
 	material.set_shader_parameter("color", _transition_color)
 	material.set_shader_parameter("progress", 0.0)
 	rect.material = material
-	
 	canvas.add_child(rect)
 	get_tree().root.add_child(canvas)
 
-	var tween_close: Tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	var tween_close := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	tween_close.tween_property(material, "shader_parameter/progress", 1.0, _transition_duration / 2.0)
 	await tween_close.finished
 
 	_change_scene_logic()
 	await get_tree().process_frame
+	await _handle_midpoint_pause()
 
-	var tween_open: Tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	var tween_open := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	tween_open.tween_property(material, "shader_parameter/progress", 0.0, _transition_duration / 2.0)
 	await tween_open.finished
 
