@@ -15,7 +15,7 @@ func _ready() -> void:
 	)
 
 	loader.with_parameters({"player_score": 1000, "entry_point": "west_gate"})
-	loader.with_transition(AsyncScene.TransitionType.Fade, 1.0, Color.BLACK)
+	loader.with_transition(AsyncScene.TransitionType.WipeLeft, 1.0, Color.BLACK)
 
 	# 2. Connect to its signals
 	loader.OnProgressUpdate.connect(func(p: float) -> void: $ProgressBar.value = p * 100)

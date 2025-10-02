@@ -18,7 +18,7 @@ It allows you to load scenes in the background, monitor their progress, pass dat
 
 ### 1\. Create and Configure the Loader
 
-In the script that will initiate the scene change, create a new `AsyncScene` instance. Use the chained methods `with_parameters()` and `with_transition()` to configure it.
+In the script that will initiate the scene change, create a new `AsyncScene` instance. Use the methods `with_parameters()` and `with_transition()` to configure it.
 
 **In the script that initiates the scene load, e.g., `LevelManager.gd`**
 
@@ -32,7 +32,7 @@ func _load_next_level() -> void:
         AsyncScene.LoadingOperation.Replace,
 		self # reference of the current scene for replacement (optional)
     )
-    
+    # optional: Sending parameters to the new scene when changed
     loader.with_parameters({"player_score": 1000, "entry_point": "west_gate"})
     loader.with_transition(AsyncScene.TransitionType.Fade, 1.0, Color.BLACK)
 
@@ -79,7 +79,7 @@ func on_scene_loaded(...params: Array) -> void:
 
   * `OnComplete(loader_instance: AsyncScene)`: Emitted when loading succeeds.
   * `OnError(err_code: ErrorCode, err_message: String)`: Emitted when loading fails.
-  * `OnProgressUpdate(progress: float)`: Emitted frequently during loading. The progress value is between `0.0` and `1.0`.
+  * `OnProgressUpdate(progress: float)`: Emitted frequently during loading. The progress value is between `0.0` and `100.0`.
 
 ### Methods
 
