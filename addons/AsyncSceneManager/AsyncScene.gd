@@ -256,8 +256,9 @@ func _change_scene_logic() -> void:
 	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.ReplaceImmediate:
 		if _current_scene:
 			_current_scene.queue_free()
-		var new_scene_instance: Node = _loaded_resource.instantiate()
-		get_tree().root.call_deferred("add_child", new_scene_instance)
+		get_tree().change_scene_to_packed(_loaded_resource)
+		await get_tree().scene_changed
+		var new_scene_instance = get_tree().current_scene
 		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
 			new_scene_instance.on_scene_loaded(_scene_parameters)
 
