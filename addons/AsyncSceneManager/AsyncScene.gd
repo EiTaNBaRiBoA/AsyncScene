@@ -258,7 +258,7 @@ func _change_scene_logic() -> void:
 			_current_scene.queue_free()
 		get_tree().change_scene_to_packed(_loaded_resource)
 		await get_tree().scene_changed
-		var new_scene_instance = get_tree().current_scene
+		var new_scene_instance := get_tree().current_scene
 		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
 			new_scene_instance.on_scene_loaded(_scene_parameters)
 
