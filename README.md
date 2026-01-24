@@ -5,33 +5,32 @@ This tool facilitates non-blocking scene loading in Godot. It allows you to load
 ## Features
 
 * **Threaded Scene Loading**: Load scenes without freezing the main thread, keeping your game responsive.
-* **Flexible Loading Operations**: Replace the current scene (Root or Sub-scene) or add a new scene additively.
-* **Immediate or Manual Control**: Choose to switch scenes immediately upon loading or trigger the change manually after loading is complete.
+* **Flexible Operations**: Supports replacing the Root scene, replacing a specific child node, or adding scenes additively.
+* **Manual or Immediate Switching**: Choose to switch immediately upon load completion or wait for a signal (e.g., "Press any key").
 * **Progress Tracking**: Use the `progress_changed` signal to easily connect the loader to a progress bar.
 * **Robust Error Handling**: The `loading_error` signal provides specific error codes and messages for easy debugging.
-* **Parameter Passing**: Send data to the new scene's root script.
-* **Rich Transition Library**: A rich library of configurable transitions, including `Fade`, directional `Wipe`, directional `Slide`, and `Iris` effects.
-* **Customizable Transition Visuals**: Use solid colors or images (`Texture2D`) for transition effects like `Fade` and `Wipe`.
-* **Pausable Transitions**: Pause transitions at their midpoint for a set duration or until manually resumed, allowing for more complex loading sequences.
+* **Parameter Passing**: Pass data (arguments) directly to the new scene's `on_scene_loaded` method.
+* **Rich Transitions**: Built-in support for `Fade`, `Wipe` (directional), `Slide` (directional), and `Iris` effects.
+* **Pausable Transitions**: Pause transitions at their midpoint (screen covered) to wait for user input or timed events. *(Supported by Fade, Wipe, and Iris)*.
+* **Customizable Visuals**: Use solid colors or `Texture2D` images for transition patterns.
+
+## Installation
+
+1.  Copy the `async_scene.gd` script into your project.
 
 ## How to Use
 
-### 1. Basic Scene Loading
+### 1. Basic Scene Loading (Replace current scene)
 
-Create an `AsyncScene` instance, connect to its signals, and call `start()` to begin loading. For non-immediate operations, you must call `change_scene()` when the `loading_completed` signal is fired.
+Create an `AsyncScene` instance, connect signals, and call `start()`. For non-immediate operations (default), you must call `change_scene()` when loading completes.
 
 ```gdscript
-# In the script that initiates the scene load, e.g., MainMenu.gd
+# MainMenu.gd
 
-# Load the next level, replacing the current scene root
 func _load_next_level() -> void:
-    # 1. Create the loader instance
-    # Defaults: Replace operation, no parent (replaces Root), no current_scene reference needed for Root replacement.
-    var loader: AsyncScene = AsyncScene.new(
-			scene_path,
-			AsyncScene.LoadingOperation.Replace,
-			self
-	)
+    # 1. Create the loader
+    # Arguments: Path, Operation, Parent (null = Root), NodeToReplace (null = Root)
+    var loader = AsyncScene.new("res://levels/level_1.tscn")
 
     # 2. Connect to its signals
     loader.progress_changed.connect(func(p: float): $ProgressBar.value = p)
@@ -43,7 +42,7 @@ func _load_next_level() -> void:
 
 func on_load_complete(loader: AsyncScene) -> void:
     print("Load complete! Changing scene now.")
-    # For Replace/Additive (non-immediate), we must call change_scene() to trigger the change
+    # Trigger the actual scene swap and transition
     loader.change_scene()
 
 func on_load_error(err_code: AsyncScene.ErrorCode, err_msg: String) -> void:
@@ -52,28 +51,29 @@ func on_load_error(err_code: AsyncScene.ErrorCode, err_msg: String) -> void:
 
 ```
 
-### 2. Method Chaining & Advanced Configuration
+### 2. Replacing a Specific Node & Method Chaining
 
-You can chain configuration methods for a cleaner setup.
+You can replace a specific child node (e.g., swapping levels inside a `LevelManager` node) and use method chaining for configuration.
 
 ```gdscript
-# Load a level with a custom wipe transition and pass parameters
-func _load_with_options() -> void:
-    var transition_image = load("res://assets/transition_texture.png")
+func _swap_level_child() -> void:
+    var wipe_texture = load("res://assets/transitions/wipe_mask.png")
     
-    # Example: Replacing a specific child node (current_level) within a LevelManager
-    # Signature: new(path, operation, parent_node, node_to_replace)
+    # We want to add the new scene to 'self' and remove '$CurrentLevel'
     var loader := AsyncScene.new(
-        "res://level_2.tscn", 
+        "res://levels/level_2.tscn", 
         AsyncScene.LoadingOperation.Replace, 
-        self, 
-        $CurrentLevel
+        self,          # Parent for the new scene
+        $CurrentLevel  # The specific node to remove upon replacing
     ) \
-    .with_parameters("player_score", 1000, "entry_point", "west_gate") \
-    .with_transition(AsyncScene.TransitionType.WipeDown, 1.5, transition_image)
+    .with_parameters("start_checkpoint", 2, "difficulty", "hard") \
+    .with_transition(AsyncScene.TransitionType.WipeRight, 1.0, wipe_texture)
 
-    loader.loading_completed.connect(on_load_complete)
-    loader.start(true) # Pass true to add the loader to 'self' (the parent defined in new())
+    loader.loading_completed.connect(func(l): l.change_scene())
+    
+    # Passing 'true' adds the Loader node as a child of 'self' instead of Root.
+    # Useful if you want the loader's lifecycle tied to this node.
+    loader.start(true)
 
 ```
 
@@ -97,10 +97,8 @@ func _load_level_with_timed_pause() -> void:
         $LevelStartLabel.show()
     )
     
-    # The loader automatically cleans itself up, so no need to call change_scene() here if it's automatic?
-    # Note: If operation is Replace (default), you still need to call change_scene() 
-    # usually inside loading_completed. The transition handles the visual, 
-    # but change_scene() swaps the nodes.
+	# Note: Even with a transition, we must call change_scene() to swap the nodes.
+    # We do this when loading completes.
     loader.loading_completed.connect(func(l): l.change_scene())
     
     loader.start()
@@ -151,24 +149,54 @@ func on_scene_loaded(params: Array) -> void:
 
 ## API Reference
 
-### Enums
+### Public Properties (Read-Only)
 
-* `LoadingOperation`: `Replace`, `ReplaceImmediate`, `Additive`, `AdditiveImmediate`
-* `ErrorCode`: `OK`, `InvalidPath`, `LoadFailed`, `InvalidResource`
-* `TransitionType`: `None`, `Fade`, `WipeLeft`, `WipeRight`, `WipeUp`, `WipeDown`, `SlideLeft`, `SlideRight`, `SlideUp`, `SlideDown`, `Iris`
+These properties allow you to poll the loader's status if you prefer not to use signals.
+
+* `progress` (float): The current loading progress, normalized between `0.0` and `1.0`.
+* `is_completed` (bool): Returns `true` if the resource loading has finished successfully.
+* `error_code` (ErrorCode): Holds the last error code encountered. Defaults to `ErrorCode.OK`.
 
 ### Signals
 
-* `loading_completed(loader_instance: AsyncScene)`: Emitted when loading succeeds.
-* `loading_error(err_code: ErrorCode, err_message: String)`: Emitted when loading fails.
-* `progress_changed(progress: float)`: Emitted frequently during loading. The progress value is between `0.0` and `100.0`.
-* `transition_midpoint_reached(loader_instance: AsyncScene)`: Emitted when a pausable transition reaches its midpoint, after the new scene is loaded but before the screen is revealed.
+* **loading_completed(loader_instance: AsyncScene)**
+    Emitted when the resource is fully loaded and ready.
+* **loading_error(err_code: ErrorCode, err_message: String)**
+    Emitted if the loading process fails.
+* **progress_changed(progress: float)**
+    Emitted periodically. **Note:** Returns a percentage value between `0.0` and `100.0` (unlike the `progress` property which is 0-1).
+* **transition_midpoint_reached(loader_instance: AsyncScene)**
+    Emitted when a pausable transition (Fade/Wipe/Iris) covers the screen completely.
+
+### Enums
+
+#### LoadingOperation
+Determines how the new scene is handled relative to the scene tree.
+* `Replace`: Removes the old scene but waits for `change_scene()` to swap them.
+* `ReplaceImmediate`: Swaps scenes immediately upon load completion.
+* `Additive`: Instantiates the new scene but waits for `change_scene()` to add it.
+* `AdditiveImmediate`: Adds the new scene immediately upon load completion.
+
+#### ErrorCode
+* `OK` (0): No error.
+* `InvalidPath` (1): The path provided to `new()` does not exist.
+* `LoadFailed` (2): `ResourceLoader` failed to start or complete the thread.
+* `InvalidResource` (3): The loaded file is not a valid `PackedScene`.
+
+#### TransitionType
+* `None`
+* `Fade`
+* `WipeLeft`, `WipeRight`, `WipeUp`, `WipeDown`
+* `SlideLeft`, `SlideRight`, `SlideUp`, `SlideDown` *(Not Pausable)*
+* `Iris`
 
 ### Methods
 
-* `with_parameters(...params: Array) -> AsyncScene`: Sets data to pass to the new scene. Returns `self` for method chaining.
-* `with_transition(type: TransitionType, duration: float, visual: Variant) -> AsyncScene`: Configures a visual transition. `visual` can be a `Color` or a `Texture2D`. Returns `self`.
-* `with_pause(duration: float = -1.0) -> AsyncScene`: Makes the transition pausable. A `duration < 0` requires a manual call to `resume_transition()`. Returns `self`.
-* `resume_transition() -> void`: Resumes a transition that was manually paused.
-* `change_scene() -> void`: Manually triggers the scene change for `Replace` and `Additive` operations.
-* `cleanup() -> void`: Removes the loader instance. This is called automatically by the loader after its work is done.
+* `new(path: String, operation: LoadingOperation, parent: Node, current_scene: Node)`: Constructor.
+* `start(add_to_parent: bool)`: Starts the background thread.
+* `change_scene()`: Finalizes the scene swap/add.
+* `with_parameters(...args)`: Passes data to the new scene.
+* `with_transition(type, duration, visual)`: Configures the transition.
+* `with_pause(duration)`: Configures the transition pause (Fade/Wipe/Iris only).
+* `resume_transition()`: Resumes a manually paused transition.
+* `cleanup()`: Frees the loader. Called automatically after transition/loading ends.
