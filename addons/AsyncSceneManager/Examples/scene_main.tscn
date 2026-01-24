@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://ca76hnnn8ums7"]
 
-[ext_resource type="Script" uid="uid://c6yslfyqcr1jy" path="res://AsyncScene/addons/AsyncSceneManager/Examples/SceneChanging.gd" id="1_bldvc"]
+[ext_resource type="Script" uid="uid://c6yslfyqcr1jy" path="res://addons/AsyncSceneManager/examples/scene_change_example.gd" id="1_bldvc"]
 
 [node name="scene_main" type="Control"]
 layout_mode = 3
@@ -10,7 +10,6 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_bldvc")
-scene_path = null
 
 [node name="Label" type="Label" parent="."]
 layout_mode = 1

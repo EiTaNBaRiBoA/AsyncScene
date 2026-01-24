@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://dqojfek3b58la"]
 
-[ext_resource type="Script" uid="uid://ba5kb48hi8xa4" path="res://AsyncScene/addons/AsyncSceneManager/Examples/scene_to_load.gd" id="1_m27bf"]
+[ext_resource type="Script" uid="uid://ba5kb48hi8xa4" path="res://addons/AsyncSceneManager/examples/scene_to_load.gd" id="1_m27bf"]
 
 [node name="scene_to_load" type="Node2D"]
 script = ExtResource("1_m27bf")

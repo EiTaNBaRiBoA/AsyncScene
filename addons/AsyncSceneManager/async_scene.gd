@@ -1,6 +1,43 @@
 class_name AsyncScene extends Node
+## Utility node to load scene asynchronously.
+##
+## This node supports loading a scene resource asynchronously and replace/add
+## the scene immediately or on call. [br]
+## This can be done as a direct child of the tree root, or as a child of a given
+## parent node. [br]
+## [br]
+## The scene change can be done with various transitions, which are implemented
+## as a ColorRect/TextureRect attached to the tree root for the duration of
+## the transition. [br]
+## [br]
+## [b]Note:[/b] Non-immediate Loading Operations require the use of 
+## [method AsyncScene.change_scene] to complete the change.
+
 
 #region Enums and Signals
+
+## Emitted when the scene has been successfully loaded. [br]
+## [param loader_instance]: A reference to this AsyncScene instance.
+signal loading_completed(loader_instance: AsyncScene)
+
+## Emitted when an error occurs during loading. [br]
+## [param err_code]: The ErrorCode representing the failure. [br]
+## [param err_message]: A descriptive string of the error.
+signal loading_error(err_code: ErrorCode, err_message: String)
+
+## Emitted periodically during loading to report progress. [br]
+## [param progress]: The loading progress as a value from 0.0 to 100.0.
+signal progress_changed(progress: float)
+
+## Emitted when a pausable transition reaches its midpoint (screen covered). [br]
+## The scene has been changed at this point. [br]
+## Connect to this signal to perform actions before the transition continues. [br]
+## [param loader_instance]: A reference to this AsyncScene instance.
+signal transition_midpoint_reached(loader_instance: AsyncScene)
+
+# Internal signal for resuming manual pauses
+signal _transition_resumed
+
 
 ## Defines the different operations that can be performed with the scene loader.
 enum LoadingOperation {
@@ -33,29 +70,8 @@ enum TransitionType {
 	Iris ## A circular iris opens to reveal the new scene.
 }
 
-
-## Emitted when the scene has been successfully loaded.
-## [param loader_instance] A reference to this AsyncScene instance.
-signal OnComplete(loader_instance: AsyncScene)
-
-## Emitted when an error occurs during loading.
-## [param err_code] The ErrorCode representing the failure.
-## [param err_message] A descriptive string of the error.
-signal OnError(err_code: ErrorCode, err_message: String)
-
-## Emitted periodically during loading to report progress.
-## [param progress] The loading progress as a value from 0.0 to 100.0.
-signal OnProgressUpdate(progress: float)
-
-## Emitted when a pausable transition reaches its midpoint (screen covered).
-## The scene has been changed at this point.
-## Connect to this signal to perform actions before the transition continues.
-signal OnTransitionMidpoint(loader_instance: AsyncScene)
-
-# Internal signal for resuming manual pauses
-signal resumed
-
 #endregion
+
 
 #region Public Properties
 
@@ -73,6 +89,7 @@ var error_code: ErrorCode = ErrorCode.OK:
 
 #endregion
 
+
 #region Private Properties
 
 # Configuration
@@ -80,6 +97,7 @@ var _packed_scene_path: String
 var _operation: LoadingOperation
 var _scene_parameters: Array = []
 var _current_scene: Node = null
+var _parent: Node = null
 
 # Transition Configuration
 var _transition_type: TransitionType = TransitionType.None
@@ -99,29 +117,50 @@ var _is_paused_at_midpoint: bool = false
 
 #endregion
 
+
 #region Constructor & Lifecycle
 
-## Initializes the scene loader. Must be added to the scene tree to start loading.
-## [param tscn_path] Path to the packed scene file.
-## [param set_operation] The loading operation to perform (default: Replace).
-func _init(tscn_path: String, set_operation: LoadingOperation = LoadingOperation.Replace, current_scene: Node = null) -> void:
+## Initializes the scene loader. Must be added to the scene tree to start loading,
+## which is done automatically in [method AsyncScene.start]. [br]
+## [param tscn_path] Path to the packed scene file. [br]
+## [param set_operation] The loading operation to perform (default: Replace, non-immediate). [br]
+## [param parent] The parent node under which to add the new scene. Removes the 
+## [code]current_scene[/code] in Replace Operations regardless of it being a child
+## of the same parent. [br]
+## [param currrent_scene] The scene to replace in any of the Replace Loading Operations.
+func _init(
+		tscn_path: String, 
+		set_operation: LoadingOperation = LoadingOperation.Replace, 
+		parent: Node = null, 
+		current_scene: Node = null
+) -> void:
 	_packed_scene_path = tscn_path
 	_operation = set_operation
 	_current_scene = current_scene
 
 
-func start() -> void:
+## Starts the loading process. [br]
+## Automatically adds this AsyncScene instance to the root of the current main 
+## loop. [br]
+## [param add_to_given_parent]: Adds this instance to the [code]parent[/code] given
+## in [code]_init[/code] instead. Does nothing if there is no [code]parent[/code] set.
+func start(add_to_given_parent: bool = false) -> void:
 	# Start loading only when added to the scene tree.
 	# This ensures timers and tweens can be created correctly.
-	Engine.get_main_loop().root.add_child.call_deferred(self)
+	if _parent != null && add_to_given_parent:
+		_parent.add_child.call_deferred(self)
+	else:
+		Engine.get_main_loop().root.add_child.call_deferred(self)
+	
 	_start_loading()
 
 #endregion
 
+
 #region Public Methods
 
-## Manually triggers the scene change for non-immediate operations.
-## This method should only be called after the 'OnComplete' signal has been emitted
+## Manually triggers the scene change for non-immediate operations. [br]
+## This method should only be called after the 'loading_completed' signal has been emitted
 func change_scene() -> void:
 	if not _is_completed:
 		push_error("Cannot change scene: Loading is not complete.")
@@ -136,11 +175,11 @@ func with_parameters(...params: Array) -> AsyncScene:
 	_scene_parameters = params
 	return self
 
-## Configures a transition effect for the scene change. Returns self for method chaining.
-## [param type] The type of transition to use.
-## [param duration] The total duration of the transition.
-## [param visual] The visual to use: a Color for solid colors, or a Texture2D for images.
-## Note: Iris transition only supports Color.
+## Configures a transition effect for the scene change. Returns self for method chaining. [br]
+## [param type]: The type of transition to use. [br]
+## [param duration]: The total duration of the transition. [br]
+## [param visual]: The visual to use: a Color for solid colors, or a Texture2D for images. [br]
+## [b]Note:[/b] Iris transition only supports Color.
 func with_transition(type: TransitionType, duration: float = 0.5, visual: Variant = Color.BLACK) -> AsyncScene:
 	_transition_type = type
 	_transition_duration = duration
@@ -156,10 +195,20 @@ func with_transition(type: TransitionType, duration: float = 0.5, visual: Varian
 		_transition_texture = null
 	return self
 
-## Makes the transition pause at its midpoint. Returns self for method chaining.
-## [param duration] Pause time in seconds. If < 0, pause is indefinite and requires a manual call to resume_transition().
-## Note: This feature is supported by Fade, Wipe, and Iris transitions.
+## Makes the transition pause at its midpoint. Returns self for method chaining. [br]
+## [param duration]: Pause time in seconds. If < 0, pause is indefinite and requires 
+## a manual call to resume_transition(). [br]
+## [b]Note:[/b] This feature is supported by Fade, Wipe, and Iris transitions.
 func with_pause(duration: float = -1.0) -> AsyncScene:
+	if (
+			_transition_type != TransitionType.Fade
+			&& _transition_type != TransitionType.WipeLeft
+			&& _transition_type != TransitionType.WipeRight
+			&& _transition_type != TransitionType.WipeUp
+			&& _transition_type != TransitionType.WipeDown
+			&& _transition_type != TransitionType.Iris
+	):
+		return
 	_transition_pausable = true
 	_transition_pause_duration = duration
 	return self
@@ -168,13 +217,14 @@ func with_pause(duration: float = -1.0) -> AsyncScene:
 func resume_transition() -> void:
 	if _is_paused_at_midpoint:
 		_is_paused_at_midpoint = false
-		emit_signal("resumed")
+		_transition_resumed.emit()
 
 ## Cleans up the loader instance.
 func cleanup() -> void:
 	queue_free()
 
 #endregion
+
 
 #region Private Methods (Loading)
 
@@ -193,7 +243,7 @@ func _start_loading() -> void:
 	timer.wait_time = 0.05
 	timer.timeout.connect(_check_status.bind(timer))
 	self.add_child.call_deferred(timer)
-	timer.autostart = 1
+	timer.autostart = true
 
 
 func _check_status(timer: Timer) -> void:
@@ -206,7 +256,7 @@ func _check_status(timer: Timer) -> void:
 				var new_progress: float = progress_array[0]
 				if not is_equal_approx(new_progress, _progress):
 					_progress = new_progress
-					OnProgressUpdate.emit(_progress * 100)
+					progress_changed.emit(_progress * 100)
 
 		ResourceLoader.THREAD_LOAD_FAILED:
 			_fail(ErrorCode.LoadFailed, "ResourceLoader failed to load the scene resource.")
@@ -232,8 +282,8 @@ func _complete() -> void:
 
 	_is_completed = true
 	_progress = 1.0
-	OnProgressUpdate.emit(_progress * 100)
-	OnComplete.emit(self)
+	progress_changed.emit(_progress * 100)
+	loading_completed.emit(self)
 
 	if _operation == LoadingOperation.ReplaceImmediate or _operation == LoadingOperation.AdditiveImmediate:
 		_perform_scene_change()
@@ -245,31 +295,61 @@ func _fail(err_code: ErrorCode, err_message: String) -> void:
 	_is_completed = true # Mark as "completed" to stop processing
 	_error_code = err_code
 	printerr(err_message)
-	OnError.emit(_error_code, err_message)
+	loading_error.emit(_error_code, err_message)
 
 	# Self-destruct after error
 	queue_free()
 
 
 func _change_scene_logic() -> void:
-	# For replacement, it's safer and cleaner to use the built-in tree method.
-	if _operation == LoadingOperation.Replace or _operation == LoadingOperation.ReplaceImmediate:
-		if _current_scene:
-			_current_scene.queue_free()
+	match _operation:
+		LoadingOperation.Replace, LoadingOperation.ReplaceImmediate:
+			_replace_scene()
+		
+		LoadingOperation.Additive, LoadingOperation.AdditiveImmediate:
+			_add_scene()
+
+
+# Helper method for new_scene_instance()
+func _replace_scene() -> void:
+	if _current_scene:
+		_current_scene.queue_free()
+
+	# Root replacement uses engine API
+	if _parent == null:
 		get_tree().change_scene_to_packed(_loaded_resource)
 		await get_tree().scene_changed
-		var new_scene_instance := get_tree().current_scene
-		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
-			new_scene_instance.on_scene_loaded(_scene_parameters)
 
-	# For additive, instantiate and add it to the root.
-	elif _operation == LoadingOperation.Additive or _operation == LoadingOperation.AdditiveImmediate:
-		var new_scene_instance: Node = _loaded_resource.instantiate()
-		if not _scene_parameters.is_empty() and new_scene_instance.has_method("on_scene_loaded"):
-			new_scene_instance.on_scene_loaded(_scene_parameters)
+		var new_scene := get_tree().current_scene
+		if not _scene_parameters.is_empty() and new_scene.has_method("on_scene_loaded"):
+			new_scene.on_scene_loaded(_scene_parameters)
+		return
+
+	# Non-root replacement
+	var new_scene_instance := _instantiate_scene()
+	_parent.add_child.call_deferred(new_scene_instance)
+
+
+# Helper method for new_scene_instance()
+func _add_scene() -> void:
+	var new_scene_instance := _instantiate_scene()
+	
+	if _parent == null:
 		get_tree().root.call_deferred("add_child", new_scene_instance)
+	else:
+		_parent.add_child.call_deferred(new_scene_instance)
+
+
+# Helper method for new_scene_instance()
+func _instantiate_scene() -> Node:
+	var instance := _loaded_resource.instantiate()
+	if not _scene_parameters.is_empty() and instance.has_method("on_scene_loaded"):
+		instance.on_scene_loaded(_scene_parameters)
+	
+	return instance
 
 #endregion
+
 
 #region Private Methods (Transitions)
 
@@ -283,6 +363,7 @@ func _perform_scene_change() -> void:
 			_change_scene_logic()
 			# The loader's job is done for non-transition changes.
 			cleanup()
+
 
 ## Helper to create the transition visual (ColorRect or TextureRect).
 func _create_transition_visual() -> Control:
@@ -300,16 +381,18 @@ func _create_transition_visual() -> Control:
 	visual_node.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	return visual_node
 
+
 ## Handles the pause logic at the midpoint of a transition.
 func _handle_midpoint_pause() -> void:
 	if _transition_pausable:
 		_is_paused_at_midpoint = true
-		OnTransitionMidpoint.emit(self)
+		transition_midpoint_reached.emit(self)
 		if _transition_pause_duration >= 0:
 			await get_tree().create_timer(_transition_pause_duration).timeout
 			_is_paused_at_midpoint = false
 		else:
-			await self.resumed
+			await self._transition_resumed
+
 
 func _fade_out_and_change() -> void:
 	var canvas := CanvasLayer.new()
@@ -333,6 +416,7 @@ func _fade_out_and_change() -> void:
 
 	canvas.queue_free()
 	cleanup()
+
 
 func _wipe_and_change() -> void:
 	var canvas := CanvasLayer.new()
