@@ -137,6 +137,7 @@ func _init(
 	_packed_scene_path = tscn_path
 	_operation = set_operation
 	_current_scene = current_scene
+	_parent = parent
 
 
 ## Starts the loading process. [br]
